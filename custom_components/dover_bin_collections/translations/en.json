@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dover Bin Collections",
+        "description": "Enter the Dover property id from the collections URL.",
+        "data": {
+          "property_id": "Property ID",
+          "base_url": "Base URL",
+          "scan_interval_hours": "Polling interval in hours"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not fetch the collections page.",
+      "no_services": "The page loaded but no collection services could be parsed.",
+      "invalid_property_id": "Property ID must be numeric.",
+      "unknown": "Unexpected error while validating the property."
+    },
+    "abort": {
+      "already_configured": "This property is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dover Bin Collections options",
+        "data": {
+          "scan_interval_hours": "Polling interval in hours"
+        }
+      }
+    }
+  }
+}

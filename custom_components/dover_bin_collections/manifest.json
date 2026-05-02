@@ -1,0 +1,13 @@
+{
+  "domain": "dover_bin_collections",
+  "name": "Dover Bin Collections",
+  "codeowners": [
+    "@danielknox"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/danielknox/dover_bin_collections",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0",
+  "issue_tracker": "https://github.com/danielknox/dover_bin_collections/issues"
+}
