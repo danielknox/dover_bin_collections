@@ -8,6 +8,7 @@
   "documentation": "https://github.com/danielknox/dover_bin_collections",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "0.1.1",
-  "issue_tracker": "https://github.com/danielknox/dover_bin_collections/issues"
+  "version": "0.1.2",
+  "issue_tracker": "https://github.com/danielknox/dover_bin_collections/issues",
+  "homeassistant": "2024.6.0"
 }

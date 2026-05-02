@@ -1,8 +1,13 @@
 {
   "name": "Dover Bin Collections",
   "content_in_root": false,
-  "country": ["GB"],
-  "domains": ["sensor", "calendar"],
-  "homeassistant": ">=2024.6.0",
+  "country": [
+    "GB"
+  ],
+  "domains": [
+    "sensor",
+    "calendar"
+  ],
+  "homeassistant": "2024.6.0",
   "render_readme": true
 }
