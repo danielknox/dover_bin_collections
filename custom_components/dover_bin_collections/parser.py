@@ -169,19 +169,25 @@ def fetch_page(url: str) -> str:
         raise DoverCollectionsConnectionError("Timed out while fetching collections page") from exc
 
 
-def group_events(services: list[CollectionService]) -> list[dict[str, Any]]:
-    by_date: dict[str, list[str]] = {}
+def collection_events(services: list[CollectionService]) -> list[dict[str, Any]]:
+    """Return one calendar event per waste service collection.
+
+    Dover can collect several waste streams on the same day, but keeping each
+    stream as its own event means more frequent services such as food waste can
+    move independently without replacing a combined multi-service calendar item.
+    """
+    events: list[dict[str, Any]] = []
     for service in services:
-        if service.next_collection_date:
-            by_date.setdefault(service.next_collection_date, []).append(service.name)
-    return [
-        {
-            "date": collection_date,
-            "summary": "Bin collection: " + ", ".join(sorted(names)),
-            "services": sorted(names),
-        }
-        for collection_date, names in sorted(by_date.items())
-    ]
+        if not service.next_collection_date:
+            continue
+        events.append(
+            {
+                "date": service.next_collection_date,
+                "summary": f"Bin collection: {service.name}",
+                "services": [service.name],
+            }
+        )
+    return sorted(events, key=lambda event: (event["date"], event["services"][0].lower()))
 
 
 def payload_from_services(url: str, services: list[CollectionService]) -> dict[str, Any]:
@@ -190,5 +196,5 @@ def payload_from_services(url: str, services: list[CollectionService]) -> dict[s
         "url": url,
         "fetched_at": dt.datetime.now(tz=ZoneInfo(DEFAULT_TIME_ZONE)).isoformat(),
         "services": [asdict(service) for service in services],
-        "next_collections": group_events(services),
+        "next_collections": collection_events(services),
     }

@@ -101,16 +101,21 @@ class DoverBinCollectionsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         changed = False
         fetched_at = payload["fetched_at"]
         current_keys: set[str] = set()
+        current_single_service_dates: set[str] = set()
 
         for event in payload["next_collections"]:
             key = self._event_key(event["date"], event["services"])
             current_keys.add(key)
+            if len(event["services"]) == 1:
+                current_single_service_dates.add(event["date"])
             new_value = {
                 "uid": key,
                 "date": event["date"],
                 "summary": event["summary"],
                 "services": event["services"],
-                "description": "Services: " + ", ".join(event["services"]),
+                "description": "Service: " + event["services"][0]
+                if len(event["services"]) == 1
+                else "Services: " + ", ".join(event["services"]),
                 ATTR_CURRENT: True,
                 ATTR_SOURCE: payload.get("source"),
                 ATTR_LAST_SEEN_AT: fetched_at,
@@ -129,6 +134,10 @@ class DoverBinCollectionsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 changed = True
 
         for key, event in list(self._calendar_events.items()):
+            if self._is_superseded_combined_event(event, current_single_service_dates):
+                self._calendar_events.pop(key, None)
+                changed = True
+                continue
             should_be_current = key in current_keys
             if event.get(ATTR_CURRENT) != should_be_current:
                 event[ATTR_CURRENT] = should_be_current
@@ -152,6 +161,16 @@ class DoverBinCollectionsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _mark_all_events_not_current(self) -> None:
         for event in self._calendar_events.values():
             event[ATTR_CURRENT] = False
+
+    @staticmethod
+    def _is_superseded_combined_event(event: dict[str, Any], current_single_service_dates: set[str]) -> bool:
+        """Return True for old grouped events replaced by per-service events."""
+        services = event.get("services")
+        return (
+            isinstance(services, list)
+            and len(services) > 1
+            and event.get("date") in current_single_service_dates
+        )
 
     def _prune_old_events(self) -> bool:
         if not self._calendar_events:
