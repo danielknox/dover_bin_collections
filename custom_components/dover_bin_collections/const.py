@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "dover_bin_collections"
 DEFAULT_NAME = "Dover Bin Collections"
-DEFAULT_BASE_URL = "https://collections.dover.gov.uk"
+DEFAULT_BASE_URL = "https://portal.waste.dover.gov.uk"
 DEFAULT_SCAN_INTERVAL_HOURS = 6
 DEFAULT_TIME_ZONE = "Europe/London"
 DEFAULT_EVENT_RETENTION_DAYS = 365

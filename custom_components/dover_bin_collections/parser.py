@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import json
 import re
 import urllib.error
 import urllib.request
@@ -10,6 +11,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .const import DEFAULT_BASE_URL, DEFAULT_TIME_ZONE, SOURCE_NAME
+
+def clean_property_id(property_id: str) -> str:
+    """Return a safe Dover portal point ID for URL and API use."""
+    return str(property_id).strip()
+
+
+def resolve_point_id(property_id: str) -> str:
+    """Return the Dover portal pointId used by the current collections API."""
+    return clean_property_id(property_id)
 
 
 class DoverCollectionsError(Exception):
@@ -40,7 +50,12 @@ class CollectionService:
 
 
 def build_url(property_id: str, base_url: str = DEFAULT_BASE_URL) -> str:
-    return f"{base_url.rstrip('/')}/property/{property_id}"
+    property_id = clean_property_id(property_id)
+    point_id = resolve_point_id(property_id)
+    base = base_url.rstrip("/")
+    if "portal.waste.dover.gov.uk" in base:
+        return f"{base}/recycling-rubbish/property-search/{point_id}/your-collection-days"
+    return f"{base}/property/{property_id}"
 
 
 def slugify(value: str) -> str:
@@ -67,6 +82,88 @@ def parse_uk_date(value: str | None) -> str | None:
         return None
     return dt.datetime.strptime(value, "%d/%m/%Y").date().isoformat()
 
+
+
+def parse_iso_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value).date().isoformat()
+    except ValueError:
+        return None
+
+
+def parse_iso_datetime(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value).isoformat()
+    except ValueError:
+        return None
+
+
+def collection_day_from_schedule(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b", value, flags=re.I)
+    return match.group(1).title() if match else value
+
+
+def parse_api_status(schedule: dict[str, Any] | None) -> tuple[str | None, bool | None, str | None]:
+    if not schedule:
+        return None, None, None
+    state = schedule.get("state")
+    core_state = schedule.get("coreStateName")
+    status = None
+    if isinstance(state, str):
+        match = re.search(r"Last collection:\s*(.+)", state, flags=re.I)
+        status = match.group(1).strip() if match else state.strip()
+    elif isinstance(core_state, str):
+        status = core_state.strip()
+    completed = None
+    if status:
+        completed = status.lower() in {"complete", "completed", "closed"}
+    if isinstance(core_state, str) and core_state.lower() in {"complete", "closed"}:
+        completed = True
+    return status, completed, parse_iso_datetime(schedule.get("completedDate"))
+
+
+def parse_api_services(api_payload: dict[str, Any], tz_name: str = DEFAULT_TIME_ZONE) -> list[CollectionService]:
+    services: list[CollectionService] = []
+    for item in api_payload.get("activeServices") or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("taskTypeName") or item.get("serviceName")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        schedules = [s for s in (item.get("serviceSchedules") or []) if isinstance(s, dict)]
+        last_schedule = schedules[0] if schedules else None
+        next_schedule = schedules[1] if len(schedules) > 1 else None
+        if next_schedule is None and schedules:
+            today = dt.datetime.now(tz=ZoneInfo(tz_name)).date()
+            for schedule in schedules:
+                schedule_date = parse_iso_date(schedule.get("currentScheduledDate"))
+                if schedule_date and dt.date.fromisoformat(schedule_date) >= today:
+                    next_schedule = schedule
+                    break
+        status, completed, completed_at = parse_api_status(last_schedule)
+        raw_status = last_schedule.get("state") if isinstance(last_schedule, dict) else None
+        services.append(
+            CollectionService(
+                name=name.strip(),
+                slug=slugify(name),
+                service_id=str(item.get("serviceId")) if item.get("serviceId") is not None else None,
+                task_id=str(item.get("taskTypeId")) if item.get("taskTypeId") is not None else None,
+                collection_day=collection_day_from_schedule(item.get("scheduleDescription")),
+                last_collection_date=parse_iso_date(last_schedule.get("currentScheduledDate")) if last_schedule else None,
+                next_collection_date=parse_iso_date(next_schedule.get("currentScheduledDate")) if next_schedule else None,
+                last_collection_status=status,
+                last_collection_completed=completed,
+                last_collection_completed_at=completed_at,
+                raw_last_collection_status=raw_status if isinstance(raw_status, str) else None,
+            )
+        )
+    return services
 
 def parse_completed_at(text: str | None, tz_name: str = DEFAULT_TIME_ZONE) -> tuple[str | None, bool | None, str | None]:
     if not text:
@@ -110,6 +207,16 @@ def extract_td(block: str, class_name: str) -> str | None:
 
 
 def parse_services(html_text: str, tz_name: str = DEFAULT_TIME_ZONE) -> list[CollectionService]:
+    try:
+        api_payload = json.loads(html_text)
+    except json.JSONDecodeError:
+        api_payload = None
+    if isinstance(api_payload, dict) and "activeServices" in api_payload:
+        services = parse_api_services(api_payload, tz_name)
+        if not services:
+            raise DoverCollectionsParseError("No collection services found in API response")
+        return services
+
     starts = [m.start() for m in re.finditer(r'<div\b[^>]*class="[^"]*\bservice-wrapper\b[^"]*"', html_text, flags=re.I)]
     blocks = [html_text[start : (starts[i + 1] if i + 1 < len(starts) else len(html_text))] for i, start in enumerate(starts)]
 
@@ -149,11 +256,50 @@ def parse_services(html_text: str, tz_name: str = DEFAULT_TIME_ZONE) -> list[Col
     return services
 
 
+def extract_property_id(url: str) -> str | None:
+    match = re.search(r"/(?:property|property-search)/(\d+)(?:/|$)", url)
+    return match.group(1) if match else None
+
+
+def fetch_api_payload(property_id: str) -> str:
+    point_id = resolve_point_id(property_id)
+    api_base = "https://portal.waste.dover.gov.uk"
+    referer = f"{api_base}/recycling-rubbish/property-search/{point_id}/your-collection-days"
+    body = json.dumps({"pointId": point_id, "pointType": "PointAddress", "councilId": "39"}).encode()
+    request = urllib.request.Request(
+        f"{api_base}/api/getCollectionDays",
+        data=body,
+        method="POST",
+        headers={
+            "User-Agent": "Home Assistant Dover Bin Collections/0.3 (+https://portal.waste.dover.gov.uk/)",
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "Origin": api_base,
+            "Referer": referer,
+            "x-recaptcha-token": "",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, "replace")
+
+
 def fetch_page(url: str) -> str:
+    property_id = extract_property_id(url)
+    if property_id:
+        try:
+            return fetch_api_payload(property_id)
+        except urllib.error.HTTPError as exc:
+            raise DoverCollectionsConnectionError(f"HTTP {exc.code} while fetching collections API") from exc
+        except urllib.error.URLError as exc:
+            raise DoverCollectionsConnectionError(f"Could not reach collections API: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise DoverCollectionsConnectionError("Timed out while fetching collections API") from exc
+
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Home Assistant Dover Bin Collections/0.2 (+https://collections.dover.gov.uk/)",
+            "User-Agent": "Home Assistant Dover Bin Collections/0.3 (+https://portal.waste.dover.gov.uk/)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
     )
